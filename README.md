@@ -65,6 +65,21 @@ Per renderle definitive e condividerle con il gruppo:
 
 Ogni record ha un `id` stabile: aggiungendo nuove righe a mano, usa un `id` nuovo e lo stesso schema degli altri record.
 
+## Importare dati
+
+Il pulsante **Importa dati** carica uno o più file insieme e riconosce da solo il formato:
+
+| File | Da dove viene |
+|---|---|
+| `produttive.json`, `culturali.json` | **Esporta dati (JSON)** di questa pagina, anche da un altro computer |
+| CSV della pagina | **Scarica CSV** di questa pagina |
+| CSV di una scheda del Google Fogli | Nel foglio condiviso: apri la scheda, poi **File → Scarica → Valori separati da virgola (.csv)** |
+| CSV delle risposte del modulo | Scheda **Risposte dal modulo**, scaricata allo stesso modo |
+
+Una riga con lo stesso `id`, oppure con lo stesso nome e comune di una scheda esistente, aggiorna quella scheda; le altre diventano schede nuove. Nei CSV le celle vuote non cancellano i dati già presenti, tranne nelle colonne da compilare (Lavorazione, Materia prima, Possibile collaborazione, Disponibilità, Note, Possibile collegamento). Le righe senza nome o senza area vengono saltate. Le segnalazioni del modulo finiscono nella categoria «Segnalati con il modulo» della loro scheda.
+
+Come le modifiche, i dati importati restano nel browser finché non premi **Esporta dati (JSON)** e carichi i due file nella cartella `data/` del repository.
+
 ## Fonti e limiti
 
 - **Realtà produttive:** ricerche su Pagine Gialle per sottocategoria su ciascun comune, del 5 novembre 2026. Sono state tenute solo le attività con sede nei 24 comuni ed è stato scartato ciò che non era pertinente (negozi, imprese edili, sindacati e simili).

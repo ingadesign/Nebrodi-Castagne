@@ -133,6 +133,8 @@ td.e select{font:inherit;font-size:13px;border:1px dashed color-mix(in srgb,var(
     <button class="btn ghost" id="reset" type="button">Azzera filtri</button>
     <button class="btn" id="export" type="button">Scarica CSV</button>
     <button class="btn ghost" id="exportjson" type="button">Esporta dati (JSON)</button>
+    <button class="btn ghost" id="import" type="button" title="JSON esportato da questa pagina, CSV della pagina, CSV di una scheda del Google Fogli o CSV delle risposte del modulo">Importa dati</button>
+    <input id="importfile" type="file" accept=".json,.csv,application/json,text/csv" multiple hidden>
     <button class="btn ghost" id="resetedits" type="button">Ripristina dati originali</button>
     <a class="btn ghost" href="download/mappatura_nebrodi.xlsx" style="text-decoration:none">Excel completo</a>
   </div>
@@ -319,15 +321,160 @@ $("exportjson").addEventListener("click",()=>{
 $("resetedits").addEventListener("click",()=>{
   const b=$("banner");
   if(b.dataset.confirm!=="1"){ b.hidden=false; b.dataset.confirm="1"; b.textContent="Premi di nuovo «Ripristina dati originali» per cancellare le modifiche salvate in questo browser."; return; }
-  try{localStorage.removeItem(LS)}catch(_){} edits={}; b.dataset.confirm=""; b.textContent="Modifiche cancellate."; load();
+  try{localStorage.removeItem(LS);localStorage.removeItem(LSI)}catch(_){} edits={}; imported={produttive:{},culturali:{}}; b.dataset.confirm=""; b.textContent="Modifiche e importazioni cancellate."; load();
 });
+
+// import (JSON della pagina, CSV della pagina, CSV del Google Fogli, CSV delle risposte del modulo)
+const LSI="mappatura-nebrodi-import-v1";
+let imported={produttive:{},culturali:{}};
+try{ const s=JSON.parse(localStorage.getItem(LSI)||"null"); if(s&&s.produttive&&s.culturali) imported=s; }catch(_){}
+const EDITABLE=new Set(["lavorazione","materia","collaborazione","disponibilita","note","collegamento"]);
+const norm0=s=>String(s??"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g," ").trim();
+const slug=s=>norm0(s).replace(/ /g,"-").slice(0,80);
+const collOf=r=>String(r.macro)==="11"?"culturali":"produttive";
+function sortRows(){ for(const c of ["produttive","culturali"]) state.rows[c].sort((a,b)=>String(a.sotto).localeCompare(b.sotto,"it")||String(a.comune).localeCompare(b.comune,"it")||String(a.nome).localeCompare(b.nome,"it")); }
+
+function applyImports(){
+  for(const c of ["produttive","culturali"]){
+    const byId=new Map(state.rows[c].map(r=>[r._id,r]));
+    for(const [id,rec] of Object.entries(imported[c])){
+      const ex=byId.get(id);
+      if(ex) Object.assign(ex,rec); else { const r={_id:id,...rec}; state.rows[c].push(r); byId.set(id,r); }
+    }
+  }
+}
+
+function parseCSV(text){
+  text=text.replace(/^﻿/,"");
+  const first=text.split(/\r?\n/,1)[0];
+  const sep=(first.split(";").length>first.split(",").length)?";":(first.includes("\t")?"\t":",");
+  const rows=[]; let row=[],f="",q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){f+='"';i++} else q=false } else f+=ch; }
+    else if(ch==='"') q=true;
+    else if(ch===sep){ row.push(f); f=""; }
+    else if(ch==="\n"||ch==="\r"){ if(ch==="\r"&&text[i+1]==="\n") i++; row.push(f); rows.push(row); row=[]; f=""; }
+    else f+=ch;
+  }
+  if(f!==""||row.length){ row.push(f); rows.push(row); }
+  const head=(rows.shift()||[]).map(h=>h.trim());
+  return rows.filter(r=>r.some(v=>v.trim()!=="")).map(r=>Object.fromEntries(head.map((h,i)=>[h,(r[i]??"").trim()])));
+}
+
+const DISPMAP={"contattato":"contattata","interessato":"interessata","non interessato":"non interessata","non raggiungibile":"non raggiungibile"};
+const normDisp=v=>{ const k=String(v||"").trim().toLowerCase(); return DISPMAP[k]||(DISP.includes(k)?k:(k?k:"da verificare")); };
+const splitContacts=s=>{ const parts=String(s||"").split(/\s*[\/,;]\s*/).map(x=>x.trim()).filter(Boolean);
+  return {telefoni:parts.filter(p=>!p.includes("@")), email:parts.filter(p=>p.includes("@")).join(" / ")}; };
+const splitComune=s=>{ const m=String(s||"").match(/^(.*?)\s*\(([A-Z]{2})\)\s*$/); return m?{comune:m[1],prov:m[2]}:{comune:String(s||"").trim()}; };
+function macroFromText(s){
+  const t=String(s||""); const n=t.match(/^\s*(\d{1,2})[.\s]/); if(n&&MACRO[n[1]]) return n[1];
+  if(/^\s*cultura/i.test(t)) return "11";
+  const k=norm0(t); for(const [m,[short,long]] of Object.entries(MACRO)){ const a=norm0(long),b=norm0(short); if(k&&(a===k||a.includes(k)||k.includes(a)||k.includes(b))) return m; }
+  return "";
+}
+function cultSub(s){ const k=norm0(String(s||"").replace(/^\s*cultura\s*[–-]\s*/i,"")); return CULT_ORDER.find(x=>norm0(x).slice(0,12)===k.slice(0,12))||String(s||"").replace(/^\s*cultura\s*[–-]\s*/i,"").trim(); }
+
+// converte una riga CSV in un record parziale, riconoscendo il formato dalle intestazioni
+function rowToRecord(o){
+  const has=k=>Object.prototype.hasOwnProperty.call(o,k);
+  if(has("In quale area rientra?")){ // risposte del modulo Google
+    const m=macroFromText(o["In quale area rientra?"]); if(!m) return null;
+    const link=o["Link (sito, pagina Facebook/Instagram o Google Maps)"]||"";
+    const cc=splitContacts(o["Contatti, se li trovi (telefono, email)"]);
+    const tipo=o["Che tipo di realtà è? (es. pasticceria, segheria, sagra, museo…)"]||"";
+    const nota=[o["Note (perché potrebbe interessare il progetto, cosa fa, chi contattare…)"],o["Il tuo nome"]?`Segnalato da ${o["Il tuo nome"]} con il modulo`:""].filter(Boolean).join(" · ");
+    const r={macro:m,nome:o["Nome dell'attività, evento o luogo"]||"",...splitComune(o["Comune"]),web:link,telefoni:cc.telefoni,email:cc.email,note:nota,fonte:"Modulo Google"};
+    if(m==="11"){ r.sotto=cultSub(o["In quale area rientra?"]); r.categoriaPG=tipo; }
+    else { r.sotto="Segnalati con il modulo"; r.categoriaPG=tipo; r.materia=o["Quale parte della castagna potrebbe usare?"]||""; r.disponibilita="da verificare"; }
+    return r;
+  }
+  if(has("Nome attività")&&has("Macro-categoria")){ // CSV esportato dalla pagina (produttive)
+    return {macro:macroFromText(o["Macro-categoria"]),nome:o["Nome attività"],comune:o["Comune"],prov:o["Provincia"],sotto:o["Categoria"],categoriaPG:o["Categoria Pagine Gialle"],
+      indirizzo:o["Indirizzo"],descrizione:o["Descrizione"],lavorazione:o["Lavorazione"],materia:o["Materia prima utilizzabile"],collaborazione:o["Possibile collaborazione"],
+      telefoni:String(o["Telefoni"]||"").split(/\s*\/\s*/).filter(Boolean),web:o["Sito web"],email:o["Email"],schedaPG:o["Scheda Pagine Gialle"],
+      disponibilita:normDisp(o["Disponibilità"]),note:o["Note"]};
+  }
+  if(has("Nome")&&has("Tematica")&&has("Tipo")){ // CSV esportato dalla pagina (culturali)
+    return {macro:"11",nome:o["Nome"],comune:o["Comune"],prov:o["Provincia"],sotto:o["Categoria"],categoriaPG:o["Tipo"],tipologia:o["Tipologia"],descrizione:o["Descrizione"],
+      tematica:o["Tematica"],periodicita:o["Periodicità"],organizzatore:o["Organizzatore"],attivita:o["Attività disponibili"],collegamento:o["Possibile collegamento"],
+      telefoni:String(o["Telefoni"]||"").split(/\s*\/\s*/).filter(Boolean),web:o["Sito web"],email:o["Email"],schedaPG:o["Fonte"],note:o["Note"]};
+  }
+  if(has("Nome attività")&&has("Sottocategoria")){ // scheda 1–10 del Google Fogli
+    const cc=splitContacts(o["Contatti (tel / email)"]); const link=o["Link"]||"";
+    const r={macro:macroFromText(o["Categoria"]),nome:o["Nome attività"],...splitComune(o["Comune"]),sotto:o["Sottocategoria"],lavorazione:o["Lavorazione (cosa produce, processo)"],
+      materia:o["Materia prima utilizzabile"],collaborazione:o["Possibile collaborazione"],telefoni:cc.telefoni,email:cc.email,
+      disponibilita:normDisp(o["Disponibilità"]),note:o["Note"],indirizzo:o["Indirizzo"],descrizione:o["Descrizione"]};
+    if(/paginegialle\.it/.test(link)) r.schedaPG=link; else if(link) r.web=link;
+    return r;
+  }
+  if(has("Ambito")&&has("Sottocategoria")&&has("Nome")){ // scheda 11 del Google Fogli
+    const cc=splitContacts(o["Contatti (tel / email)"]);
+    return {macro:"11",nome:o["Nome"],...splitComune(o["Comune"]),sotto:cultSub(o["Ambito"]),categoriaPG:o["Sottocategoria"],schedaPG:o["Link"],tipologia:o["Tipologia"],
+      descrizione:o["Descrizione"],tematica:o["Tematica"],periodicita:o["Periodicità"],organizzatore:o["Organizzatore"],attivita:o["Attività disponibili"],
+      collegamento:o["Possibile collegamento al progetto"],telefoni:cc.telefoni,email:cc.email,note:o["Note"]};
+  }
+  return undefined; // formato sconosciuto
+}
+
+// unisce un record: aggiorna una scheda esistente (stesso id, oppure stesso nome e comune) o ne crea una nuova
+function mergeRecord(rec,fromJSON,stats){
+  if(!rec||!String(rec.nome||"").trim()||!MACRO[String(rec.macro)]){ stats.skip++; return; }
+  rec.macro=String(rec.macro); const c=collOf(rec);
+  let ex=rec.id?state.rows[c].find(r=>r._id===rec.id):null;
+  if(!ex) ex=state.rows[c].find(r=>norm0(r.nome)===norm0(rec.nome)&&norm0(r.comune)===norm0(rec.comune));
+  const patch={};
+  for(const [k,v] of Object.entries(rec)){
+    if(k==="id"||k==="_id") continue;
+    const empty=v==null||v===""||(Array.isArray(v)&&!v.length);
+    if(ex&&empty&&!(fromJSON||EDITABLE.has(k))) continue; // i campi vuoti non cancellano i dati esistenti
+    if(ex&&(k==="web"||k==="schedaPG")&&(v===ex.web||v===ex.schedaPG)) continue;
+    patch[k]=v;
+  }
+  let id;
+  if(ex){ id=ex._id; Object.assign(ex,patch); stats.upd++; }
+  else {
+    id=rec.id||("imp-"+slug(`${rec.comune} ${rec.nome}`)); let n=2; const base=id;
+    while(state.rows[c].some(r=>r._id===id)) id=`${base}-${n++}`;
+    const r={sotto:"Da classificare",comune:"",prov:"",telefoni:[],disponibilita:c==="produttive"?"da verificare":undefined,...patch,_id:id};
+    state.rows[c].push(r); Object.assign(patch,r); delete patch._id; stats.add++;
+  }
+  imported[c][id]={...(imported[c][id]||{}),...patch};
+  delete edits[c+"/"+id]; // l'importazione è il dato più recente
+}
+
+async function importFiles(files){
+  const stats={upd:0,add:0,skip:0}, bad=[];
+  for(const file of files){
+    try{
+      const text=await file.text();
+      if(/\.json$/i.test(file.name)||/^\s*[\[{]/.test(text)){
+        let data=JSON.parse(text); if(!Array.isArray(data)) data=data.produttive||data.culturali?[...(data.produttive||[]),...(data.culturali||[])]:[data];
+        const isCult=/cultur/i.test(file.name);
+        for(const r of data){ const rec={...r}; if(rec.macro==null&&isCult) rec.macro="11"; mergeRecord(rec,true,stats); }
+      } else {
+        const rows=parseCSV(text); if(!rows.length){ bad.push(file.name); continue; }
+        const first=rowToRecord(rows[0]); if(first===undefined){ bad.push(file.name); continue; }
+        for(const o of rows) mergeRecord(rowToRecord(o),false,stats);
+      }
+    }catch(_){ bad.push(file.name); }
+  }
+  sortRows();
+  try{ localStorage.setItem(LSI,JSON.stringify(imported)); localStorage.setItem(LS,JSON.stringify(edits)); }catch(_){}
+  const b=$("banner"); b.hidden=false; b.dataset.confirm="";
+  b.textContent=`Importazione completata: ${stats.add} nuove schede, ${stats.upd} aggiornate`+(stats.skip?`, ${stats.skip} righe saltate (senza nome o area)`:"")+
+    (bad.length?`. File non riconosciuti: ${bad.join(", ")}`:"")+". Per renderle definitive premi «Esporta dati (JSON)» e carica i file nella cartella data/ del repository.";
+  render();
+}
+$("import").addEventListener("click",()=>$("importfile").click());
+$("importfile").addEventListener("change",e=>{ const f=[...e.target.files]; e.target.value=""; if(f.length) importFiles(f); });
 
 // boot
 async function load(){
   try{
     const [p,c]=await Promise.all(["produttive","culturali"].map(k=>fetch(`data/${k}.json`,{cache:"no-cache"}).then(r=>{if(!r.ok)throw new Error(r.status);return r.json()})));
     const norm=a=>a.map(({id,...r})=>({_id:id,...r})).sort((a,b)=>String(a.sotto).localeCompare(b.sotto,"it")||String(a.comune).localeCompare(b.comune,"it")||String(a.nome).localeCompare(b.nome,"it"));
-    state.rows.produttive=norm(p); state.rows.culturali=norm(c); applyEdits();
+    state.rows.produttive=norm(p); state.rows.culturali=norm(c); applyImports(); applyEdits(); sortRows();
   }catch(e){ $("banner").hidden=false; $("banner").textContent="Non riesco a leggere i file in data/. Apri la pagina da un server web (per esempio GitHub Pages), non come file locale."; }
   state.loaded.produttive=state.loaded.culturali=true; render();
 }
