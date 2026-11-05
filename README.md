@@ -22,10 +22,29 @@ Mappatura delle realtà produttive e delle risorse culturali nei 24 comuni del P
 | `data/culturali.json` | Le risorse culturali (macro-categoria 11) |
 | `download/mappatura_nebrodi.xlsx` | Excel completo: una scheda per macro-categoria, colori per categoria e legenda con i conteggi |
 | `download/*.csv` | Gli stessi dati in CSV, con il punto e virgola come separatore |
+| `.gitignore` | Esclude dal repository i file di sistema (`.DS_Store` del Mac e simili) |
+| `.nojekyll` | Dice a GitHub Pages di pubblicare i file così come sono, senza elaborarli |
+
+## Caricare su GitHub
+
+**Dal terminale** (consigliato, carica anche i file nascosti):
+
+```bash
+cd mappatura-nebrodi
+git init -b main
+git add .
+git commit -m "Mappatura Nebrodi: prima versione"
+git remote add origin https://github.com/<utente>/<nome-repository>.git
+git push -u origin main
+```
+
+**Dal sito di GitHub** (senza terminale): nel nuovo repository scegli **Add file → Upload files** e trascina il contenuto della cartella. Il Finder nasconde i file che iniziano con il punto: premi `Cmd + Shift + .` per vederli, così trascini anche `.gitignore` e `.nojekyll` e lasci fuori `.DS_Store`.
+
+Prima di renderlo pubblico, tieni conto che i dati contengono nomi e numeri di telefono di ditte individuali. Sono presi da elenchi pubblici, ma se preferisci non ripubblicarli crea il repository come **Private** (GitHub Pages sui repository privati richiede un piano a pagamento).
 
 ## Pubblicare con GitHub Pages
 
-1. Crea un nuovo repository su GitHub e carica tutti i file di questa cartella, compreso `.nojekyll`.
+1. Carica i file come descritto sopra.
 2. Vai in **Settings → Pages**.
 3. In **Source** scegli **Deploy from a branch**, poi il branch `main` e la cartella `/ (root)`, e salva.
 4. Dopo un minuto circa la pagina è online all'indirizzo `https://<utente>.github.io/<nome-repository>/`.
